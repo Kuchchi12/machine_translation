@@ -1,8 +1,11 @@
 from pickle import load
 from numpy.random import shuffle
-from keras.preprocessing.text import Tokenizer
-from keras.preprocessing.sequence import pad_sequences
+from tensorflow.keras.preprocessing.text import Tokenizer
+from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow import convert_to_tensor, int64
+import numpy as np
+import glob
+import os
 
 
 class PrepareDataset:
@@ -26,23 +29,62 @@ class PrepareDataset:
 
 		return len(tokenizer.word_index) + 1
 
-	def __call__(self, filename, **kwargs):
+	def __call__(self, train_filename, val_filename, **kwargs):
 		# Load a clean dataset
-		clean_dataset = load(open(filename, 'rb'))
 
+		train_text_files = glob.glob(os.path.join(train_filename, '*.txt'))
+		val_text_files = glob.glob(os.path.join(val_filename, '*.txt'))
+
+		train_file_contents = {}
+		val_file_contents = {}
+
+
+		for train_file in train_text_files:
+			lang = train_file.split('_')[-2]
+			with open(f'{train_file}' , 'rb') as file:
+				train_file_contents[lang] = file.read()
+
+		for val_file in val_text_files:
+			lang = val_file.split('_')[-2]
+			with open(f'{val_file}' , 'rb') as file:
+				val_file_contents[lang] = file.read()
+
+		train_data_de = train_file_contents['de'].decode().split('\n')
+		train_data_en = train_file_contents['en'].decode().split('\n')
+
+		val_data_de = val_file_contents['de'].decode().split('\n')
+		val_data_en = val_file_contents['en'].decode().split('\n')
+
+		train_data_de_en = [[i,j] for i,j in zip(train_data_de, train_data_en)]
+		val_data_de_en = [[i,j] for i,j in zip(val_data_de, val_data_en)]
+
+		np_train = np.array(train_data_de_en)
+		np_val = np.array(val_data_de_en)
+			
+			
 		# Reduce dataset size
-		dataset = clean_dataset[:self.n_sentences, :]
+		train_dataset = np_train[:self.n_sentences, :]
+		val_dataset = np_val
 
 		# Include start and end of string tokens
-		for i in range(dataset[:, 0].size):
-			dataset[i, 0] = "<START> " + dataset[i, 0] + " <EOS>"
-			dataset[i, 1] = "<START> " + dataset[i, 1] + " <EOS>"
+		for i in range(train_dataset[:, 0].size):
+			train_dataset[i, 0] = "<START> " + train_dataset[i, 0] + " <EOS>"
+			train_dataset[i, 1] = "<START> " + train_dataset[i, 1] + " <EOS>"
+
+		for i in range(val_dataset[:, 0].size):
+			val_dataset[i, 0] = "<START> " + val_dataset[i, 0] + " <EOS>"
+			val_dataset[i, 1] = "<START> " + val_dataset[i, 1] + " <EOS>"
 
 		# Random shuffle the dataset
-		shuffle(dataset)
+		shuffle(train_dataset)
+		shuffle(val_dataset)
 
 		# Split the dataset
-		train = dataset[:int(self.n_sentences * self.train_split)]
+		train = train_dataset[:int(self.n_sentences * self.train_split)]
+		val = val_dataset
+
+
+		#TRAIN
 
 		# Prepare tokenizer for the encoder input
 		enc_tokenizer = self.create_tokenizer(train[:, 0])
@@ -64,4 +106,17 @@ class PrepareDataset:
 		trainY = pad_sequences(trainY, maxlen=dec_seq_length, padding='post')
 		trainY = convert_to_tensor(trainY, dtype=int64)
 
-		return trainX, trainY, train, enc_seq_length, dec_seq_length, enc_vocab_size, dec_vocab_size
+		#VAL
+
+		# Encode and pad the input sequences
+		valX = enc_tokenizer.texts_to_sequences(val[:, 0])
+		valX = pad_sequences(valX, maxlen=enc_seq_length, padding='post')
+		valX = convert_to_tensor(valX, dtype=int64)
+
+		# Encode and pad the input sequences
+		valY = dec_tokenizer.texts_to_sequences(val[:, 1])
+		valY = pad_sequences(valY, maxlen=dec_seq_length, padding='post')
+		valY = convert_to_tensor(valY, dtype=int64)
+
+
+		return trainX, trainY, train, valX, valY, val, enc_seq_length, dec_seq_length, enc_vocab_size, dec_vocab_size
